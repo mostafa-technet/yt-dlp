@@ -1,10 +1,10 @@
-name: rendered webpage capture
+name: capture rendered page (with cookies)
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Webpage URL to capture"
+        description: "Page URL to capture"
         required: true
         type: string
 
@@ -12,13 +12,17 @@ jobs:
   capture:
     runs-on: ubuntu-latest
 
+    env:
+      MY_CURRENT_SITE_COOKIE: ${{ secrets.MY_CURRENT_SITE_COOKIE }}
+
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -29,11 +33,9 @@ jobs:
           npm install playwright
           npx playwright install --with-deps chromium
 
-      - name: Capture rendered page
+      - name: Create capture script
         run: |
-          mkdir -p output
-
-          cat > capture.js <<'EOF'
+          cat << 'EOF' > capture.js
           const { chromium } = require('playwright');
           const fs = require('fs');
 
@@ -41,59 +43,73 @@ jobs:
 
             const url = process.env.TARGET_URL;
 
-            const browser = await chromium.launch({ headless: true });
-
-            const page = await browser.newPage({
-              viewport: { width: 1440, height: 2200 }
-            });
-
             console.log("Opening:", url);
 
+            const cookies = JSON.parse(process.env.MY_CURRENT_SITE_COOKIE);
+
+            const browser = await chromium.launch({
+              headless: true
+            });
+
+            const context = await browser.newContext({
+              viewport: { width: 1400, height: 2000 }
+            });
+
+            await context.addCookies(cookies);
+
+            const page = await context.newPage();
+
             await page.goto(url, {
-              waitUntil: 'networkidle',
+              waitUntil: "networkidle",
               timeout: 120000
             });
 
-            await page.waitForTimeout(4000);
+            await page.waitForTimeout(5000);
+
+            if (!fs.existsSync("output")) {
+              fs.mkdirSync("output");
+            }
 
             await page.screenshot({
-              path: 'output/page.png',
+              path: "output/page.png",
               fullPage: true
             });
 
             try {
               await page.pdf({
-                path: 'output/page.pdf',
-                format: 'A4',
+                path: "output/page.pdf",
+                format: "A4",
                 printBackground: true
               });
             } catch (e) {
-              console.log("PDF not supported for this page");
+              console.log("PDF generation skipped");
             }
 
             const html = await page.content();
-            fs.writeFileSync('output/rendered.html', html);
+            fs.writeFileSync("output/rendered.html", html);
 
             await browser.close();
 
-            console.log("Capture finished");
+            console.log("Capture complete");
 
           })();
           EOF
 
+      - name: Run capture
+        run: |
           TARGET_URL="${{ inputs.url }}" node capture.js
 
-      - name: Create zip archive
+      - name: Create zip
         run: |
           cd output
           zip -r ../rendered_site.zip .
           cd ..
 
-      - name: Commit rendered site to repository
+      - name: Push result to repository
         env:
           REPO_PUSH_TOKEN: ${{ secrets.REPO_PUSH_TOKEN }}
         run: |
-          git config user.name "rendered-downloader"
+          git config user.name "render-bot"
           git config user.email "bot@local"
 
           TARGET_BRANCH="rendered-pages"
@@ -101,17 +117,16 @@ jobs:
           git checkout -B "$TARGET_BRANCH"
 
           mkdir -p downloads
-
           mv rendered_site.zip downloads/
 
           git add downloads/rendered_site.zip
 
           if git diff --cached --quiet; then
-            echo "No changes to commit"
+            echo "Nothing to commit"
             exit 0
           fi
 
-          git commit -m "Add rendered page $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git commit -m "Rendered page capture $(date -u '+%Y-%m-%d %H:%M UTC')"
 
           git remote set-url origin \
           https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
