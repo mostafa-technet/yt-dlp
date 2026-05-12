@@ -40,14 +40,12 @@ jobs:
           --level=1 \
           --domains="$DOMAIN" \
           --execute robots=off \
-          --mirror \
-          --no-host-directories \
-          --cut-dirs=0 \
           --user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
           --timeout=20 \
           --tries=2 \
           --directory-prefix=site \
-          "$URL"
+          "$URL" || true
+
 
 
           echo "Downloaded files:"
