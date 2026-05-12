@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: "Webpage URL"
+        description: "Webpage URL to capture"
         required: true
         type: string
 
@@ -13,8 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -30,26 +32,62 @@ jobs:
       - name: Capture rendered page
         run: |
           mkdir -p output
+
           cat > capture.js <<'EOF'
           const { chromium } = require('playwright');
           const fs = require('fs');
 
           (async () => {
-            const url = process.env.TARGET_URL;
-            const browser = await chromium.launch({ headless: true });
-            const page = await browser.newPage({ viewport: { width: 1440, height: 2200 } });
 
-            await page.goto(url, { waitUntil: 'networkidle', timeout: 120000 });
-            await page.screenshot({ path: 'output/page.png', fullPage: true });
-            await page.pdf({ path: 'output/page.pdf', format: 'A4', printBackground: true }).catch(() => {});
+            const url = process.env.TARGET_URL;
+
+            const browser = await chromium.launch({ headless: true });
+
+            const page = await browser.newPage({
+              viewport: { width: 1440, height: 2200 }
+            });
+
+            console.log("Opening:", url);
+
+            await page.goto(url, {
+              waitUntil: 'networkidle',
+              timeout: 120000
+            });
+
+            await page.waitForTimeout(4000);
+
+            await page.screenshot({
+              path: 'output/page.png',
+              fullPage: true
+            });
+
+            try {
+              await page.pdf({
+                path: 'output/page.pdf',
+                format: 'A4',
+                printBackground: true
+              });
+            } catch (e) {
+              console.log("PDF not supported for this page");
+            }
+
             const html = await page.content();
             fs.writeFileSync('output/rendered.html', html);
 
             await browser.close();
+
+            console.log("Capture finished");
+
           })();
           EOF
 
           TARGET_URL="${{ inputs.url }}" node capture.js
+
+      - name: Create zip archive
+        run: |
+          cd output
+          zip -r ../rendered_site.zip .
+          cd ..
 
       - name: Commit rendered site to repository
         env:
@@ -57,28 +95,25 @@ jobs:
         run: |
           git config user.name "rendered-downloader"
           git config user.email "bot@local"
-      
+
           TARGET_BRANCH="rendered-pages"
-      
+
           git checkout -B "$TARGET_BRANCH"
-      
+
           mkdir -p downloads
+
           mv rendered_site.zip downloads/
-      
+
           git add downloads/rendered_site.zip
-      
+
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0
           fi
-      
-          git commit -m "Add rendered page $(date -u '+%Y-%m-%d %H:%M')"
-      
+
+          git commit -m "Add rendered page $(date -u '+%Y-%m-%d %H:%M UTC')"
+
           git remote set-url origin \
-            https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
-      
+          https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+
           git push origin HEAD:$TARGET_BRANCH --force
-  
-          with:
-            name: rendered-page
-            path: output/
