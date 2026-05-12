@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       file_url:
-        description: "Direct file URL"
+        description: "Direct file URLs (space or comma separated)"
         required: true
         type: string
 
@@ -24,26 +24,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wget curl git
 
-      - name: Download file
+      - name: Download files
         shell: bash
         run: |
           mkdir -p downloads/files
 
-          URL="${{ inputs.file_url }}"
+          RAW_INPUT="${{ inputs.file_url }}"
 
-          FILE_NAME=$(basename "${URL%%\?*}")
+          echo "Raw input:"
+          echo "$RAW_INPUT"
 
-          if [ -z "$FILE_NAME" ] || [ "$FILE_NAME" = "/" ]; then
-            FILE_NAME="downloaded_file"
-          fi
+          # convert commas to spaces
+          CLEANED="${RAW_INPUT//,/ }"
 
-          echo "Downloading: $URL"
+          echo ""
+          echo "Parsed URLs:"
+          echo "$CLEANED"
 
-          curl -L --fail \
-            --retry 3 \
-            --retry-delay 5 \
-            -o "downloads/files/$FILE_NAME" \
-            "$URL"
+          for URL in $CLEANED; do
+
+            FILE_NAME=$(basename "${URL%%\?*}")
+
+            if [ -z "$FILE_NAME" ] || [ "$FILE_NAME" = "/" ]; then
+              FILE_NAME="downloaded_file_$(date +%s)"
+            fi
+
+            echo ""
+            echo "Downloading: $URL"
+
+            curl -L --fail \
+              --retry 3 \
+              --retry-delay 5 \
+              -o "downloads/files/$FILE_NAME" \
+              "$URL" || echo "Failed: $URL"
+
+          done
 
           echo ""
           echo "Downloaded files:"
