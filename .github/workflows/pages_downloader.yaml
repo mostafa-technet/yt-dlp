@@ -1,4 +1,4 @@
-name: fast webpage downloader
+name: rendered webpage capture
 
 on:
   workflow_dispatch:
@@ -9,73 +9,50 @@ on:
         type: string
 
 jobs:
-  download:
+  capture:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
-          persist-credentials: false
+          node-version: 20
 
-      - name: Install wget
+      - name: Install Playwright
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget git
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
 
-      - name: Download single page with assets
+      - name: Capture rendered page
         run: |
-          URL="${{ inputs.url }}"
-          DOMAIN=$(echo "$URL" | awk -F/ '{print $3}')
+          mkdir -p output
+          cat > capture.js <<'EOF'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
 
-          mkdir -p site
+          (async () => {
+            const url = process.env.TARGET_URL;
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({ viewport: { width: 1440, height: 2200 } });
 
-          wget \
-          --page-requisites \
-          --convert-links \
-          --adjust-extension \
-          --span-hosts \
-          --no-parent \
-          --level=1 \
-          --domains="$DOMAIN" \
-          --execute robots=off \
-          --user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
-          --timeout=20 \
-          --tries=2 \
-          --directory-prefix=site \
-          "$URL" || true
+            await page.goto(url, { waitUntil: 'networkidle', timeout: 120000 });
+            await page.screenshot({ path: 'output/page.png', fullPage: true });
+            await page.pdf({ path: 'output/page.pdf', format: 'A4', printBackground: true }).catch(() => {});
+            const html = await page.content();
+            fs.writeFileSync('output/rendered.html', html);
 
+            await browser.close();
+          })();
+          EOF
 
+          TARGET_URL="${{ inputs.url }}" node capture.js
 
-          echo "Downloaded files:"
-          find site | head -100
-
-      - name: Configure git
-        run: |
-          git config user.name "webpage-downloader-bot"
-          git config user.email "bot@local"
-
-      - name: Commit files
-        run: |
-          TARGET_BRANCH="downloaded-pages"
-
-          git checkout -B "$TARGET_BRANCH"
-
-          git add site/
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          git commit -m "Downloaded webpage $(date -u '+%Y-%m-%d %H:%M UTC')"
-
-      - name: Push to GitHub
-        env:
-          REPO_PUSH_TOKEN: ${{ secrets.REPO_PUSH_TOKEN }}
-        run: |
-          git remote set-url origin \
-          https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
-
-          git push origin HEAD:downloaded-pages --force
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-page
+          path: output/
