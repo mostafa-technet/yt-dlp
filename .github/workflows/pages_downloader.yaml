@@ -51,8 +51,34 @@ jobs:
 
           TARGET_URL="${{ inputs.url }}" node capture.js
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: rendered-page
-          path: output/
+      - name: Commit rendered site to repository
+        env:
+          REPO_PUSH_TOKEN: ${{ secrets.REPO_PUSH_TOKEN }}
+        run: |
+          git config user.name "rendered-downloader"
+          git config user.email "bot@local"
+      
+          TARGET_BRANCH="rendered-pages"
+      
+          git checkout -B "$TARGET_BRANCH"
+      
+          mkdir -p downloads
+          mv rendered_site.zip downloads/
+      
+          git add downloads/rendered_site.zip
+      
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+      
+          git commit -m "Add rendered page $(date -u '+%Y-%m-%d %H:%M')"
+      
+          git remote set-url origin \
+            https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+      
+          git push origin HEAD:$TARGET_BRANCH --force
+  
+          with:
+            name: rendered-page
+            path: output/
