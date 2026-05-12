@@ -1,4 +1,4 @@
-name: capture rendered page (with cookies)
+name: capture rendered page (cookies supported)
 
 on:
   workflow_dispatch:
@@ -39,13 +39,57 @@ jobs:
           const { chromium } = require('playwright');
           const fs = require('fs');
 
+          function parseNetscapeCookies(txt) {
+            const lines = txt.split(/\r?\n/);
+            const cookies = [];
+
+            for (const rawLine of lines) {
+              let line = rawLine.trim();
+              if (!line) continue;
+              if (line === '# Netscape HTTP Cookie File') continue;
+
+              let httpOnly = false;
+
+              if (line.startsWith('#HttpOnly_')) {
+                httpOnly = true;
+                line = line.replace('#HttpOnly_', '');
+              } else if (line.startsWith('#')) {
+                continue;
+              }
+
+              const parts = line.split('\t');
+              if (parts.length < 7) continue;
+
+              const [domain, , path, secureFlag, expires, name, value] = parts;
+
+              cookies.push({
+                domain,
+                path: path || '/',
+                name,
+                value,
+                secure: secureFlag.toUpperCase() === 'TRUE',
+                httpOnly,
+                expires: Number(expires) > 0 ? Number(expires) : -1
+              });
+            }
+
+            return cookies;
+          }
+
           (async () => {
 
             const url = process.env.TARGET_URL;
+            const rawCookieText = process.env.MY_CURRENT_SITE_COOKIE;
 
-            console.log("Opening:", url);
+            let cookies;
 
-            const cookies = JSON.parse(process.env.MY_CURRENT_SITE_COOKIE);
+            if (rawCookieText.trim().startsWith('[')) {
+              cookies = JSON.parse(rawCookieText);
+            } else {
+              cookies = parseNetscapeCookies(rawCookieText);
+            }
+
+            console.log("Loaded cookies:", cookies.length);
 
             const browser = await chromium.launch({
               headless: true
@@ -59,6 +103,8 @@ jobs:
 
             const page = await context.newPage();
 
+            console.log("Opening:", url);
+
             await page.goto(url, {
               waitUntil: "networkidle",
               timeout: 120000
@@ -66,9 +112,7 @@ jobs:
 
             await page.waitForTimeout(5000);
 
-            if (!fs.existsSync("output")) {
-              fs.mkdirSync("output");
-            }
+            fs.mkdirSync("output", { recursive: true });
 
             await page.screenshot({
               path: "output/page.png",
@@ -82,7 +126,7 @@ jobs:
                 printBackground: true
               });
             } catch (e) {
-              console.log("PDF generation skipped");
+              console.log("PDF skipped");
             }
 
             const html = await page.content();
@@ -90,7 +134,7 @@ jobs:
 
             await browser.close();
 
-            console.log("Capture complete");
+            console.log("Capture finished");
 
           })();
           EOF
@@ -105,7 +149,7 @@ jobs:
           zip -r ../rendered_site.zip .
           cd ..
 
-      - name: Push result to repository
+      - name: Push result to repo
         env:
           REPO_PUSH_TOKEN: ${{ secrets.REPO_PUSH_TOKEN }}
         run: |
@@ -126,7 +170,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Rendered page capture $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git commit -m "Rendered page $(date -u '+%Y-%m-%d %H:%M UTC')"
 
           git remote set-url origin \
           https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
