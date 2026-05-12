@@ -1,74 +1,23 @@
-name: httrack site downloader
+- name: Download page (HTML + assets only)
+  run: |
+    URL="${{ inputs.url }}"
+    DOMAIN=$(echo "$URL" | awk -F/ '{print $3}')
 
-on:
-  workflow_dispatch:
-    inputs:
-      url:
-        description: "Website URL to mirror"
-        required: true
-        type: string
+    mkdir -p site
 
-jobs:
-  mirror:
-    runs-on: ubuntu-latest
+    wget \
+      --page-requisites \
+      --convert-links \
+      --adjust-extension \
+      --span-hosts \
+      --no-parent \
+      --level=1 \
+      --domains="$DOMAIN" \
+      --user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
+      --timeout=20 \
+      --tries=2 \
+      --directory-prefix=site \
+      "$URL" || true
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-
-      - name: Install HTTrack
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y httrack git
-
-      - name: Mirror website
-        run: |
-          URL="${{ inputs.url }}"
-          mkdir -p site
-
-          httrack "$URL" \
-            -O site \
-            "+*" \
-            -v \
-            --depth=3 \
-            --robots=0 \
-            --sockets=4 \
-            --keep-alive \
-            --timeout=30 \
-            --retries=3 \
-            || true
-
-          echo "Downloaded files:"
-          find site | head -100
-
-      - name: Configure git
-        run: |
-          git config user.name "site-downloader-bot"
-          git config user.email "bot@local"
-
-      - name: Commit site
-        run: |
-          TARGET_BRANCH="downloaded-pages"
-
-          git checkout -B "$TARGET_BRANCH"
-
-          git add site/
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          git commit -m "Mirror site $(date -u '+%Y-%m-%d %H:%M UTC')"
-
-      - name: Push to GitHub
-        env:
-          REPO_PUSH_TOKEN: ${{ secrets.REPO_PUSH_TOKEN }}
-        run: |
-          git remote set-url origin \
-          https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
-
-          git push origin downloaded-pages --force
+    echo "Downloaded files:"
+    find site | head -100
