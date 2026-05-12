@@ -32,19 +32,23 @@ jobs:
           mkdir -p site
 
           wget \
-            --page-requisites \
-            --convert-links \
-            --adjust-extension \
-            --span-hosts \
-            --no-parent \
-            --level=1 \
-            --domains="$DOMAIN" \
-            --user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
-            --timeout=20 \
-            --tries=2 \
-            --no-check-certificate \
-            --directory-prefix=site \
-            "$URL" || true
+          --page-requisites \
+          --convert-links \
+          --adjust-extension \
+          --span-hosts \
+          --no-parent \
+          --level=1 \
+          --domains="$DOMAIN" \
+          --execute robots=off \
+          --mirror \
+          --no-host-directories \
+          --cut-dirs=0 \
+          --user-agent="Mozilla/5.0 (X11; Linux x86_64)" \
+          --timeout=20 \
+          --tries=2 \
+          --directory-prefix=site \
+          "$URL"
+
 
           echo "Downloaded files:"
           find site | head -100
