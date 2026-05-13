@@ -19,24 +19,30 @@ def parse_netscape(text):
     for line in text.splitlines():
         line = line.strip()
 
-        if not line or line.startswith("#"):
+        if not line:
             continue
 
-        parts = line.split("\t")
+        if line.startswith("#"):
+            continue
+
+        # supports tabs or spaces
+        parts = re.split(r"\s+", line)
 
         if len(parts) < 7:
             continue
 
-        domain, flag, path, secure, expiry, name, value = parts
+        domain, flag, path, secure, expiry, name, value = parts[:7]
 
-        cookies.append({
+        cookie = {
             "domain": domain,
             "path": path,
             "name": name,
             "value": value,
             "secure": secure.lower() == "true",
-            "httpOnly": False
-        })
+            "httpOnly": False,
+        }
+
+        cookies.append(cookie)
 
     return cookies
 
@@ -44,9 +50,11 @@ def parse_netscape(text):
 def load_cookies():
     text = COOKIE_SECRET.strip()
 
+    # JSON cookie export
     if text.startswith("["):
         return json.loads(text)
 
+    # Netscape cookies.txt
     return parse_netscape(text)
 
 
@@ -58,72 +66,113 @@ def wait_for_upload(page):
     while True:
         html = page.content()
 
-        if "Upload complete" in html or "Checks complete" in html:
+        if (
+            "Upload complete" in html
+            or "Checks complete" in html
+            or "Finished processing" in html
+        ):
             print("Upload finished.")
-            break
+            return
 
-        if "Processing abandoned" in html or "Upload failed" in html:
-            raise Exception("Upload failed")
+        if (
+            "Processing abandoned" in html
+            or "Upload failed" in html
+            or "Daily upload limit reached" in html
+        ):
+            raise Exception("YouTube upload failed")
 
-        if time.time() - start > 3600:
-            raise Exception("Upload timeout (1 hour)")
+        elapsed = time.time() - start
+
+        print(f"Still uploading... {int(elapsed)}s")
+
+        if elapsed > 3600:
+            raise Exception("Upload timeout after 1 hour")
 
         time.sleep(5)
 
 
 with sync_playwright() as p:
 
-    browser = p.chromium.launch(headless=True)
+    print("Launching browser...")
+
+    browser = p.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+        ]
+    )
 
     context = browser.new_context()
+
+    print("Loading cookies...")
 
     cookies = load_cookies()
 
     formatted = []
 
     for c in cookies:
-        formatted.append({
+
+        item = {
             "name": c["name"],
             "value": c["value"],
             "domain": c["domain"],
             "path": c.get("path", "/"),
-            "secure": c.get("secure", False)
-        })
+            "secure": c.get("secure", False),
+        }
+
+        formatted.append(item)
 
     context.add_cookies(formatted)
 
     page = context.new_page()
 
     print("Opening YouTube Studio...")
-    page.goto("https://studio.youtube.com", wait_until="networkidle")
 
-    time.sleep(5)
-
-    print("Opening upload page...")
     page.goto(
-        "https://studio.youtube.com/channel/UC/videos/upload",
-        wait_until="networkidle"
+        "https://studio.youtube.com",
+        wait_until="networkidle",
+        timeout=120000
     )
 
     time.sleep(5)
 
-    print("Uploading video...")
+    print("Opening upload page...")
 
-    page.locator('input[type="file"]').first.set_input_files(VIDEO_FILE)
+    page.goto(
+        "https://studio.youtube.com/channel/UC/videos/upload",
+        wait_until="networkidle",
+        timeout=120000
+    )
+
+    time.sleep(5)
+
+    print("Selecting video file...")
+
+    file_input = page.locator('input[type="file"]').first
+    file_input.set_input_files(VIDEO_FILE)
+
+    print("Video selected.")
 
     time.sleep(10)
 
+    print("Setting title...")
+
     title_box = page.locator(
-        'div[aria-label="Add a title that describes your video (type @ to mention a channel)"]'
+        'div[aria-label*="title"]'
     ).first
 
     title_box.click()
+
     page.keyboard.press("Control+A")
     page.keyboard.press("Backspace")
+
     title_box.fill(TITLE)
 
+    print("Setting description...")
+
     desc_box = page.locator(
-        'div[aria-label="Tell viewers about your video (type @ to mention a channel)"]'
+        'div[aria-label*="Tell viewers about your video"]'
     ).first
 
     desc_box.click()
@@ -131,43 +180,78 @@ with sync_playwright() as p:
 
     wait_for_upload(page)
 
-    for _ in range(3):
-        page.locator('#next-button').click()
+    print("Navigating upload steps...")
+
+    for i in range(3):
+        print(f"Next step {i+1}")
+
+        next_btn = page.locator("#next-button").first
+        next_btn.click()
+
         time.sleep(3)
 
-    if VISIBILITY == "public":
-        page.locator('tp-yt-paper-radio-button[name="PUBLIC"]').click()
-    elif VISIBILITY == "private":
-        page.locator('tp-yt-paper-radio-button[name="PRIVATE"]').click()
+    print(f"Setting visibility: {VISIBILITY}")
+
+    if VISIBILITY.lower() == "public":
+        page.locator(
+            'tp-yt-paper-radio-button[name="PUBLIC"]'
+        ).click()
+
+    elif VISIBILITY.lower() == "private":
+        page.locator(
+            'tp-yt-paper-radio-button[name="PRIVATE"]'
+        ).click()
+
     else:
-        page.locator('tp-yt-paper-radio-button[name="UNLISTED"]').click()
+        page.locator(
+            'tp-yt-paper-radio-button[name="UNLISTED"]'
+        ).click()
 
     time.sleep(2)
 
-    page.locator('#done-button').click()
+    print("Finishing upload...")
 
-    print("Finalizing upload...")
+    done_btn = page.locator("#done-button").first
+    done_btn.click()
 
-    time.sleep(8)
+    time.sleep(10)
 
     video_url = None
 
     try:
-        link = page.locator('a:has-text("View on YouTube")').first
-        video_url = link.get_attribute("href")
-    except:
-        pass
+        print("Trying to extract video URL...")
+
+        view_link = page.locator(
+            'a:has-text("View on YouTube")'
+        ).first
+
+        href = view_link.get_attribute("href")
+
+        if href:
+            video_url = href
+
+    except Exception as e:
+        print(f"Could not get URL: {e}")
+
+    print("===================================")
 
     if video_url:
+
         print(f"VIDEO_URL={video_url}")
 
-        match = re.search(r"v=([^&]+)", video_url)
+        match = re.search(
+            r"(?:v=|youtu\.be/)([A-Za-z0-9_-]+)",
+            video_url
+        )
+
         if match:
             print(f"VIDEO_ID={match.group(1)}")
 
     else:
-        print("Upload completed but video URL could not be detected.")
+        print("Upload completed but URL was not detected.")
 
     print("SUCCESS: upload workflow finished")
+
+    print("===================================")
 
     browser.close()
