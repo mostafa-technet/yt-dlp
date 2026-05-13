@@ -119,15 +119,7 @@ jobs:
               fullPage: true
             });
 
-            try {
-              await page.pdf({
-                path: "output/page.pdf",
-                format: "A4",
-                printBackground: true
-              });
-            } catch (e) {
-              console.log("PDF skipped");
-            }
+          
 
             const html = await page.content();
             fs.writeFileSync("output/rendered.html", html);
