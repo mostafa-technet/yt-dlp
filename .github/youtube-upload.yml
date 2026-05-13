@@ -1,0 +1,192 @@
+name: Upload Video To YouTube
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Direct MP4 URL"
+        required: true
+      title:
+        description: "YouTube title"
+        required: true
+      description:
+        description: "YouTube description"
+        required: false
+      visibility:
+        description: "public / unlisted / private"
+        required: false
+        default: "unlisted"
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install playwright
+          playwright install chromium
+
+      - name: Download video
+        run: |
+          curl -L "${{ github.event.inputs.video_url }}" -o video.mp4
+
+      - name: Create uploader script
+        run: |
+          cat > upload.py <<'PY'
+          import os
+          import json
+          import time
+          from playwright.sync_api import sync_playwright
+
+          COOKIE_SECRET = os.environ["YT_GOOGLE_CK"]
+
+          TITLE = os.environ["YT_TITLE"]
+          DESCRIPTION = os.environ.get("YT_DESCRIPTION", "")
+          VISIBILITY = os.environ.get("YT_VISIBILITY", "unlisted")
+
+          VIDEO_FILE = "video.mp4"
+
+          def parse_netscape(text):
+              cookies = []
+
+              for line in text.splitlines():
+                  line = line.strip()
+
+                  if not line or line.startswith("#"):
+                      continue
+
+                  parts = line.split("\t")
+
+                  if len(parts) < 7:
+                      continue
+
+                  domain, flag, path, secure, expiry, name, value = parts
+
+                  cookies.append({
+                      "domain": domain,
+                      "path": path,
+                      "name": name,
+                      "value": value,
+                      "secure": secure.lower() == "true",
+                      "httpOnly": False,
+                  })
+
+              return cookies
+
+          def load_cookies():
+              text = COOKIE_SECRET.strip()
+
+              if text.startswith("["):
+                  return json.loads(text)
+
+              return parse_netscape(text)
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(
+                  headless=True
+              )
+
+              context = browser.new_context()
+
+              cookies = load_cookies()
+
+              cleaned = []
+
+              for c in cookies:
+                  item = {
+                      "name": c["name"],
+                      "value": c["value"],
+                      "domain": c["domain"],
+                      "path": c.get("path", "/"),
+                  }
+
+                  if "secure" in c:
+                      item["secure"] = c["secure"]
+
+                  cleaned.append(item)
+
+              context.add_cookies(cleaned)
+
+              page = context.new_page()
+
+              print("Opening YouTube Studio...")
+              page.goto("https://studio.youtube.com", wait_until="networkidle")
+
+              time.sleep(5)
+
+              print("Opening upload page...")
+              page.goto(
+                  "https://studio.youtube.com/channel/UC/videos/upload",
+                  wait_until="networkidle"
+              )
+
+              time.sleep(5)
+
+              print("Uploading video...")
+
+              file_input = page.locator('input[type="file"]').first
+              file_input.set_input_files(VIDEO_FILE)
+
+              time.sleep(10)
+
+              title_box = page.locator(
+                  'div[aria-label="Add a title that describes your video (type @ to mention a channel)"]'
+              ).first
+
+              title_box.click()
+
+              page.keyboard.press("Control+A")
+              page.keyboard.press("Backspace")
+              title_box.fill(TITLE)
+
+              desc_box = page.locator(
+                  'div[aria-label="Tell viewers about your video (type @ to mention a channel)"]'
+              ).first
+
+              desc_box.click()
+              desc_box.fill(DESCRIPTION)
+
+              for _ in range(3):
+                  next_btn = page.locator('ytcp-button#next-button')
+                  next_btn.click()
+                  time.sleep(3)
+
+              if VISIBILITY == "public":
+                  page.locator('tp-yt-paper-radio-button[name="PUBLIC"]').click()
+
+              elif VISIBILITY == "private":
+                  page.locator('tp-yt-paper-radio-button[name="PRIVATE"]').click()
+
+              else:
+                  page.locator('tp-yt-paper-radio-button[name="UNLISTED"]').click()
+
+              time.sleep(2)
+
+              done_btn = page.locator('ytcp-button#done-button')
+              done_btn.click()
+
+              print("Upload complete.")
+
+              time.sleep(15)
+
+              browser.close()
+          PY
+
+      - name: Upload to YouTube
+        env:
+          YT_GOOGLE_CK: ${{ secrets.YT_GOOGLE_CK }}
+          YT_TITLE: ${{ github.event.inputs.title }}
+          YT_DESCRIPTION: ${{ github.event.inputs.description }}
+          YT_VISIBILITY: ${{ github.event.inputs.visibility }}
+        run: |
+          python upload.py
