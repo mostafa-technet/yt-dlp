@@ -42,6 +42,11 @@ jobs:
         YT_COOKIES: ${{ secrets.YT_COOKIES }}
       run: echo "$YT_COOKIES" > ytcookies.txt
 
+    - name: Debug Inputs
+      run: |
+        echo "Received URLs: ${{ github.event.inputs.urls }}"
+        echo "Download mode: ${{ github.event.inputs.mode }}"
+
     - name: Download using yt-dlp for each URL
       run: |
         IFS=',' read -ra URL_ARRAY <<< "${{ github.event.inputs.urls }}"
