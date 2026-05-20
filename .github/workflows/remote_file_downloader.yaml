@@ -42,8 +42,9 @@ jobs:
           echo "$CLEANED"
 
           for URL in $CLEANED; do
-
-            FILE_NAME=$(basename "${URL%%\?*}")
+            BASE_NAME=$(basename "${URL%%\?*}")
+            TIMESTAMP=$(date +%s)
+            FILE_NAME="${TIMESTAMP}_${BASE_NAME}"
 
             if [ -z "$FILE_NAME" ] || [ "$FILE_NAME" = "/" ]; then
               FILE_NAME="downloaded_file_$(date +%s)"
