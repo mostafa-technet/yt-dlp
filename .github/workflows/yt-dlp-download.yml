@@ -6,7 +6,15 @@ on:
       url:
         description: 'URL to download'
         required: true
-        type: string
+        type: string  
+      mode:
+        description: 'Download mode: video or audio'
+        required: true
+        default: video
+        type: choice
+        options:
+          - video
+          - audio
 
 jobs:
   download_and_push:
@@ -29,28 +37,42 @@ jobs:
         python3 -m pip install --upgrade pip
         pip install yt-dlp
 
-    - name: Download using yt-dlp
+    - name: Prepare ytcookies.txt
       env:
         YT_COOKIES: ${{ secrets.YT_COOKIES }}
-      run: |
-        yt-dlp \
-          --no-part \
-          --force-overwrites \
-          --retries 5 \
-          --socket-timeout 30 \
-          --retry-sleep 5 \
-          --ffmpeg-location /usr/bin/ffmpeg \
-          --cookies-from-browser chrome \
-          --cookies ./ytcookies.txt \
-          "${{ github.event.inputs.url }}"
-
-    - name: Prepare ytcookies.txt
       run: echo "$YT_COOKIES" > ytcookies.txt
+
+    - name: Download using yt-dlp
+      run: |
+        if [ "${{ github.event.inputs.mode }}" = "audio" ]; then
+          yt-dlp \
+            -f bestaudio \
+            --no-part \
+            --force-overwrites \
+            --retries 5 \
+            --socket-timeout 30 \
+            --retry-sleep 5 \
+            --ffmpeg-location /usr/bin/ffmpeg \
+            --cookies ./ytcookies.txt \
+            "${{ github.event.inputs.url }}"
+        else
+          yt-dlp \
+            -f bestvideo+bestaudio/best \
+            --no-part \
+            --force-overwrites \
+            --retries 5 \
+            --socket-timeout 30 \
+            --retry-sleep 5 \
+            --ffmpeg-location /usr/bin/ffmpeg \
+            --cookies ./ytcookies.txt \
+            "${{ github.event.inputs.url }}"
+        fi
 
     - name: Commit and push downloads
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add -A
-        git commit -m "Add downloaded media from ${{ github.event.inputs.url }}" || echo "No changes to commit"
+        git commit -m "Add downloaded media from ${{ github.event.inputs.url }} (${{
+          github.event.inputs.mode }})" || echo "No changes to commit"
         git push origin HEAD:yt-dlp-downloads
