@@ -164,7 +164,6 @@ jobs:
           set -e
 
           TARGET_BRANCH="yt-dlp-downloads"
-
           git checkout -B "$TARGET_BRANCH"
 
           git add -f downloads/
