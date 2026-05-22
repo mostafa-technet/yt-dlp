@@ -162,7 +162,7 @@ jobs:
         shell: bash
         run: |
           set -e
-
+          
           TARGET_BRANCH="yt-dlp-downloads"
 
           git checkout -B "$TARGET_BRANCH"
