@@ -156,7 +156,7 @@ jobs:
           mv rendered_site.zip downloads/
 
           git add downloads/rendered_site.zip
-
+          
           if git diff --cached --quiet; then
             echo "Nothing to commit"
             exit 0
