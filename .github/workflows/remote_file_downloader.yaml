@@ -36,15 +36,14 @@ jobs:
 
           # convert commas to spaces
           CLEANED="${RAW_INPUT//,/ }"
-          COUNT=0
+
           echo ""
           echo "Parsed URLs:"
-          echo "$CLEANED"          
+          echo "$CLEANED"
+
           for URL in $CLEANED; do
-            COUNT=$((COUNT+1))
-            BASE_NAME=$(basename "${URL%%\?*}")
-            TIMESTAMP=$(date +%s)
-            FILE_NAME="${COUNT}_${BASE_NAME}"
+
+            FILE_NAME=$(basename "${URL%%\?*}")
 
             if [ -z "$FILE_NAME" ] || [ "$FILE_NAME" = "/" ]; then
               FILE_NAME="downloaded_file_$(date +%s)"
