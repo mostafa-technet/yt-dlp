@@ -8,6 +8,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   capture:
     runs-on: ubuntu-latest
@@ -16,11 +19,11 @@ jobs:
       MY_CURRENT_SITE_COOKIE: ${{ secrets.MY_CURRENT_SITE_COOKIE }}
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -42,92 +45,52 @@ jobs:
           function parseNetscapeCookies(txt) {
             const lines = txt.split(/\r?\n/);
             const cookies = [];
-
             for (const rawLine of lines) {
               let line = rawLine.trim();
-              if (!line) continue;
-              if (line === '# Netscape HTTP Cookie File') continue;
-
+              if (!line || line.startsWith('#')) continue;
               let httpOnly = false;
-
               if (line.startsWith('#HttpOnly_')) {
                 httpOnly = true;
                 line = line.replace('#HttpOnly_', '');
-              } else if (line.startsWith('#')) {
-                continue;
               }
-
               const parts = line.split('\t');
               if (parts.length < 7) continue;
-
               const [domain, , path, secureFlag, expires, name, value] = parts;
-
               cookies.push({
-                domain,
-                path: path || '/',
-                name,
-                value,
+                domain, path: path || '/', name, value,
                 secure: secureFlag.toUpperCase() === 'TRUE',
-                httpOnly,
-                expires: Number(expires) > 0 ? Number(expires) : -1
+                httpOnly, expires: Number(expires) > 0 ? Number(expires) : -1
               });
             }
-
             return cookies;
           }
 
           (async () => {
-
             const url = process.env.TARGET_URL;
-            const rawCookieText = process.env.MY_CURRENT_SITE_COOKIE;
-
-            let cookies;
-
-            if (rawCookieText.trim().startsWith('[')) {
-              cookies = JSON.parse(rawCookieText);
-            } else {
-              cookies = parseNetscapeCookies(rawCookieText);
-            }
+            const rawCookieText = process.env.MY_CURRENT_SITE_COOKIE || "";
+            let cookies = [];
+            try {
+              if (rawCookieText.trim().startsWith('[')) {
+                cookies = JSON.parse(rawCookieText);
+              } else if (rawCookieText.trim() !== "") {
+                cookies = parseNetscapeCookies(rawCookieText);
+              }
+            } catch (e) { console.error("Cookie parsing failed:", e); }
 
             console.log("Loaded cookies:", cookies.length);
-
-            const browser = await chromium.launch({
-              headless: true
-            });
-
-            const context = await browser.newContext({
-              viewport: { width: 1400, height: 2000 }
-            });
-
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ viewport: { width: 1400, height: 2000 } });
             await context.addCookies(cookies);
-
             const page = await context.newPage();
-
             console.log("Opening:", url);
-
-            await page.goto(url, {
-              waitUntil: "networkidle",
-              timeout: 120000
-            });
-
+            await page.goto(url, { waitUntil: "networkidle", timeout: 120000 });
             await page.waitForTimeout(5000);
-
             fs.mkdirSync("output", { recursive: true });
-
-            await page.screenshot({
-              path: "output/page.png",
-              fullPage: true
-            });
-
-          
-
+            await page.screenshot({ path: "output/page.png", fullPage: true });
             const html = await page.content();
             fs.writeFileSync("output/rendered.html", html);
-
             await browser.close();
-
             console.log("Capture finished");
-
           })();
           EOF
 
@@ -150,7 +113,13 @@ jobs:
 
           TARGET_BRANCH="rendered-pages"
 
-          git checkout -B "$TARGET_BRANCH"
+          # Fetch and checkout the target branch, or create it if missing
+          git fetch origin
+          if git ls-remote --heads origin $TARGET_BRANCH | grep -q $TARGET_BRANCH; then
+            git checkout $TARGET_BRANCH
+          else
+            git checkout -b $TARGET_BRANCH
+          fi
 
           mkdir -p downloads
           mv rendered_site.zip downloads/
@@ -158,13 +127,11 @@ jobs:
           git add downloads/rendered_site.zip
           
           if git diff --cached --quiet; then
-            echo "Nothing to commit"
+            echo "Nothing to change, exiting."
             exit 0
           fi
 
           git commit -m "Rendered page $(date -u '+%Y-%m-%d %H:%M UTC')"
 
-          git remote set-url origin \
-          https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
-
-          git push origin HEAD:$TARGET_BRANCH --force
+          git remote set-url origin https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          git push origin $TARGET_BRANCH
