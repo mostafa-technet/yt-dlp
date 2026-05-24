@@ -1,4 +1,4 @@
-﻿name: capture rendered page (cookies supported)
+﻿name: capture rendered page
 
 on:
   workflow_dispatch:
@@ -14,30 +14,30 @@ permissions:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    env:
-      YT_GOOGLE_CK: ${{ secrets.YT_GOOGLE_CK }}
-      YT_TITLE: "My Automated Upload"
-      YT_VISIBILITY: "unlisted"
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: |
           pip install playwright
           playwright install chromium
 
-      - name: Run upload script
-        run: python upload.py
+      - name: Run capture script
+        env:
+          TARGET_URL: ${{ inputs.url }}
+        run: python capture.py
 
-      # (Optional) If you still want to zip/push, you can keep your Git steps here,
-      # but ensure the script output is moved to the expected directory.
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add output/
+          # Only commit if there are changes
+          git commit -m "Add capture results for ${{ inputs.url }}" || echo "No changes to commit"
+          git push
