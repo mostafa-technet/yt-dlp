@@ -33,9 +33,14 @@ jobs:
           TARGET_URL: ${{ inputs.url }}
         run: python capture.py
 
-      - name: Commit and push changes
+       - name: Commit and push changes
         run: |
           git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          # The -f flag tells git to add files even if they are in .gitignore
+          git add -f output/
+          git commit -m "Add capture results" || echo "No changes to commit"
+          git push
           git config --local user.name "GitHub Action"
           git add output/
           # Only commit if there are changes
