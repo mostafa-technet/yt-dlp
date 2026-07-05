@@ -24,14 +24,18 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget curl git
+          sudo apt-get install -y wget curl git jq python3 python3-pip
+          python3 -m pip install --upgrade pip
+          python3 -m pip install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
 
       - name: Download files
         shell: bash
         run: |
           set +e
           mkdir -p downloads/files
+          mkdir -p gdrive_uploads
           mkdir -p failed
+          mkdir -p gdrive-links
 
           RAW_INPUT="${{ inputs.file_url }}"
 
@@ -48,6 +52,8 @@ jobs:
           echo "Parsed URLs:"
           cat urls.txt
 
+          MAX_SIZE=$((100 * 1024 * 1024))
+
           while IFS= read -r URL; do
             [ -z "$URL" ] && continue
 
@@ -57,24 +63,112 @@ jobs:
               FILE_NAME="downloaded_file_$(date +%s)"
             fi
 
+            OUT_FILE="downloads/files/$FILE_NAME"
+
             echo ""
             echo "Downloading: $URL"
 
-            curl -L --fail \
+            if curl -L --fail \
               --retry 3 \
               --retry-delay 5 \
-              -o "downloads/files/$FILE_NAME" \
-              "$URL" || echo "$URL" >> failed/failed.txt
+              -o "$OUT_FILE" \
+              "$URL"; then
+
+              FILE_SIZE=$(stat -c%s "$OUT_FILE")
+
+              if [ "$FILE_SIZE" -ge "$MAX_SIZE" ]; then
+                echo "Large file detected, moving to Google Drive upload queue: $FILE_NAME ($FILE_SIZE bytes)"
+                mv "$OUT_FILE" "gdrive_uploads/$FILE_NAME"
+              fi
+            else
+              echo "$URL" >> failed/failed.txt
+            fi
 
           done < urls.txt
 
           echo ""
-          echo "Downloaded files:"
+          echo "GitHub-stored files:"
           find downloads -type f || true
+
+          echo ""
+          echo "Google Drive upload queue:"
+          find gdrive_uploads -type f || true
 
           echo ""
           echo "Failed URLs:"
           cat failed/failed.txt 2>/dev/null || echo "None"
+
+      - name: Write Google service account key
+        if: ${{ hashFiles('gdrive_uploads/**') != '' }}
+        shell: bash
+        env:
+          GDRIVE_SERVICE_ACCOUNT: ${{ secrets.GDRIVE_SERVICE_ACCOUNT }}
+        run: |
+          mkdir -p .gdrive
+          printf '%s' "$GDRIVE_SERVICE_ACCOUNT" > .gdrive/service-account.json
+
+      - name: Upload large files to Google Drive
+        if: ${{ hashFiles('gdrive_uploads/**') != '' }}
+        shell: bash
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          cat > upload_to_gdrive.py <<'PY'
+          import os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+          SERVICE_ACCOUNT_FILE = ".gdrive/service-account.json"
+          FOLDER_ID = os.environ["GDRIVE_FOLDER_ID"]
+
+          creds = service_account.Credentials.from_service_account_file(
+              SERVICE_ACCOUNT_FILE, scopes=SCOPES
+          )
+          service = build("drive", "v3", credentials=creds)
+
+          os.makedirs("gdrive-links", exist_ok=True)
+
+          with open("gdrive-links/links.txt", "a", encoding="utf-8") as links_file:
+              for name in sorted(os.listdir("gdrive_uploads")):
+                  path = os.path.join("gdrive_uploads", name)
+                  if not os.path.isfile(path):
+                      continue
+
+                  metadata = {
+                      "name": name,
+                      "parents": [FOLDER_ID],
+                  }
+
+                  media = MediaFileUpload(path, resumable=True)
+                  uploaded = service.files().create(
+                      body=metadata,
+                      media_body=media,
+                      fields="id,name"
+                  ).execute()
+
+                  file_id = uploaded["id"]
+
+                  # Optional: make file readable by anyone with link
+                  service.permissions().create(
+                      fileId=file_id,
+                      body={"type": "anyone", "role": "reader"}
+                  ).execute()
+
+                  direct_link = f"https://drive.google.com/uc?export=download&id={file_id}"
+                  view_link = f"https://drive.google.com/file/d/{file_id}/view"
+
+                  line = f"{name} | {direct_link} | {view_link}"
+                  print(line)
+                  links_file.write(line + "\n")
+          PY
+
+          python3 upload_to_gdrive.py
+
+          echo ""
+          echo "Google Drive links:"
+          cat gdrive-links/links.txt
 
       - name: Configure git
         run: |
@@ -90,6 +184,7 @@ jobs:
 
           git add -f downloads/
           git add -f failed/ || true
+          git add -f gdrive-links/ || true
 
           if git diff --cached --quiet; then
             echo "No changes to commit"
