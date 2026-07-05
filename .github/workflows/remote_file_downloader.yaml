@@ -4,9 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       file_url:
-        description: "Direct file URLs (space or comma separated)"
+        description: "Direct file URLs (space, comma, or newline separated)"
         required: true
         type: string
+
+permissions:
+  contents: write
 
 jobs:
   download:
@@ -17,7 +20,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false
 
       - name: Install tools
         run: |
@@ -27,25 +29,31 @@ jobs:
       - name: Download files
         shell: bash
         run: |
+          set +e
           mkdir -p downloads/files
+          mkdir -p failed
 
           RAW_INPUT="${{ inputs.file_url }}"
 
           echo "Raw input:"
           echo "$RAW_INPUT"
 
-          # convert commas to spaces
-          CLEANED="${RAW_INPUT//,/ }"
+          printf "%s\n" "$RAW_INPUT" \
+            | tr ',' '\n' \
+            | tr ' ' '\n' \
+            | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+            | sed '/^$/d' > urls.txt
 
           echo ""
           echo "Parsed URLs:"
-          echo "$CLEANED"
+          cat urls.txt
 
-          for URL in $CLEANED; do
+          while IFS= read -r URL; do
+            [ -z "$URL" ] && continue
 
-            FILE_NAME=$(basename "${URL%%\?*}")
+            FILE_NAME="$(basename "${URL%%\?*}")"
 
-            if [ -z "$FILE_NAME" ] || [ "$FILE_NAME" = "/" ]; then
+            if [ -z "$FILE_NAME" ] || [ "$FILE_NAME" = "/" ] || [ "$FILE_NAME" = "." ]; then
               FILE_NAME="downloaded_file_$(date +%s)"
             fi
 
@@ -56,13 +64,17 @@ jobs:
               --retry 3 \
               --retry-delay 5 \
               -o "downloads/files/$FILE_NAME" \
-              "$URL" || echo "Failed: $URL"
+              "$URL" || echo "$URL" >> failed/failed.txt
 
-          done
+          done < urls.txt
 
           echo ""
           echo "Downloaded files:"
-          find downloads -type f
+          find downloads -type f || true
+
+          echo ""
+          echo "Failed URLs:"
+          cat failed/failed.txt 2>/dev/null || echo "None"
 
       - name: Configure git
         run: |
@@ -76,7 +88,8 @@ jobs:
 
           git checkout -B "$TARGET_BRANCH"
 
-          git add downloads/
+          git add -f downloads/
+          git add -f failed/ || true
 
           if git diff --cached --quiet; then
             echo "No changes to commit"
@@ -86,10 +99,6 @@ jobs:
           git commit -m "remote download $(date -u '+%Y-%m-%d %H:%M UTC')"
 
       - name: Push to GitHub
-        env:
-          REPO_PUSH_TOKEN: ${{ secrets.REPO_PUSH_TOKEN }}
         run: |
-          git remote set-url origin \
-          https://x-access-token:${REPO_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
-
-          git push origin remote-downloads --force
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -f origin remote-downloads
