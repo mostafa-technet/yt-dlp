@@ -1,0 +1,95 @@
+name: YouTube to Dropbox Uploader
+
+on:
+  workflow_dispatch:
+    inputs:
+      youtube_url:
+        description: "YouTube Video or Playlist URL"
+        required: true
+        type: string
+      download_mode:
+        description: "Download Format"
+        required: true
+        type: choice
+        default: "video"
+        options:
+          - video
+          - audio
+
+permissions:
+  contents: write
+
+jobs:
+  download-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl jq
+          # Install latest yt-dlp
+          sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+
+      - name: Download from YouTube
+        id: download
+        run: |
+          mkdir -p downloads
+          
+          # انتخاب فرمت دانلود بر اساس ورودی کاربر
+          if [ "${{ inputs.download_mode }}" = "audio" ]; then
+            FORMAT_OPTS="-x --audio-format mp3 --audio-quality 0"
+          else
+            FORMAT_OPTS="-f bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+          fi
+          
+          # دانلود ویدیوها
+          yt-dlp $FORMAT_OPTS \
+            -o "downloads/%(title)s.%(ext)s" \
+            --restrict-filenames \
+            --no-mtime \
+            "${{ inputs.youtube_url }}"
+
+          echo "Downloads completed. Files:"
+          ls -la downloads/
+
+      - name: Upload to Dropbox
+        env:
+          DROPBOX_ACCESS_TOKEN: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
+        run: |
+          # بررسی وجود فایل برای آپلود
+          if [ -z "$(ls -A downloads)" ]; then
+            echo "No files downloaded to upload."
+            exit 1
+          fi
+
+          # آپلود تک تک فایل‌ها به دراپ‌باکس
+          for FILE_PATH in downloads/*; do
+            [ -e "$FILE_PATH" ] || continue
+            FILE_NAME=$(basename "$FILE_PATH")
+            echo "Uploading $FILE_NAME to Dropbox..."
+
+            # ایجاد آرگومان‌های API به صورت JSON امن
+            API_ARG=$(jq -cn \
+              --arg path "/YouTube-Downloads/$FILE_NAME" \
+              '{path: $path, mode: "add", autorename: true, mute: false, strict_conflict: false}')
+
+            # ارسال فایل به Dropbox API
+            RESPONSE=$(curl -X POST https://content.dropboxapi.com/2/files/upload \
+              --write-out "%{http_code}" --silent --output /dev/null \
+              -H "Authorization: Bearer $DROPBOX_ACCESS_TOKEN" \
+              -H "Dropbox-API-Arg: $API_ARG" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$FILE_PATH")
+
+            if [ "$RESPONSE" -eq 200 ]; then
+              echo "Successfully uploaded: $FILE_NAME"
+            else
+              echo "Failed to upload $FILE_NAME. HTTP status code: $RESPONSE"
+              exit 1
+            fi
+          done
