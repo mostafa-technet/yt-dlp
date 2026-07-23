@@ -27,70 +27,58 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js (JS Runtime for yt-dlp)
-        uses: actions/setup-node@v4
+      - name: Setup yt-dlp
+        uses: AnimMouse/setup-yt-dlp@v1
         with:
-          node-version: 20
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg curl jq
-          # Install latest yt-dlp
-          sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
-          sudo chmod a+rx /usr/local/bin/yt-dlp
+          with-ffmpeg: true
 
       - name: Create Cookie File
         run: |
-          # Write cookies secret to a temporary file if present
           echo "${{ secrets.YT_GOOGLE_CK }}" > cookies.txt
-          # Clean it up in case it's empty or has weird formatting
-          sed -i '/^[[:space:]]*$/d' cookies.txt
+          if [ ! -s cookies.txt ]; then rm cookies.txt; fi
 
       - name: Download from YouTube
         id: download
         run: |
           mkdir -p downloads
           
-          # Choose download format
           if [ "${{ inputs.download_mode }}" = "audio" ]; then
             FORMAT_OPTS="-x --audio-format mp3 --audio-quality 0"
           else
-            FORMAT_OPTS="-f bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+            # Prioritizes 480p -> 720p -> 360p -> best fallback
+            FORMAT_OPTS="-f (bestvideo[height=480]+bestaudio)/best[height=480]/(bestvideo[height=720]+bestaudio)/best[height=720]/(bestvideo[height=360]+bestaudio)/best[height=360]/best"
           fi
 
-          # Build cookie flag if cookie file is not empty
           COOKIE_FLAG=""
-          if [ -s cookies.txt ]; then
-            echo "Cookies found! Applying --cookies flag."
+          if [ -f cookies.txt ]; then
+            echo "Cookies detected. Using authenticated session."
             COOKIE_FLAG="--cookies cookies.txt"
           else
-            echo "Warning: No cookies secret found in YT_GOOGLE_CK. Proceeding without cookies."
+            echo "Warning: No cookies found. This might fail on GitHub runners."
           fi
           
-          # Download videos using yt-dlp
+          # Added --js-runtimes node to ensure EJS uses Node.js for signature decryption
           yt-dlp $FORMAT_OPTS $COOKIE_FLAG \
+            --js-runtimes node \
             -o "downloads/%(title)s.%(ext)s" \
             --restrict-filenames \
             --no-mtime \
             "${{ inputs.youtube_url }}"
 
-          echo "Downloads completed. Files:"
+          echo "Download process finished."
           ls -la downloads/
 
       - name: Upload to Dropbox
         env:
           DROPBOX_ACCESS_TOKEN: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
         run: |
-          # Clean up temporary cookies file immediately
           rm -f cookies.txt
 
           if [ -z "$(ls -A downloads)" ]; then
-            echo "No files downloaded to upload."
+            echo "No files to upload."
             exit 1
           fi
 
-          # Upload files to Dropbox
           for FILE_PATH in downloads/*; do
             [ -e "$FILE_PATH" ] || continue
             FILE_NAME=$(basename "$FILE_PATH")
