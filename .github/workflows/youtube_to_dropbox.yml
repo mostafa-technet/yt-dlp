@@ -27,6 +27,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js (JS Runtime for yt-dlp)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -35,20 +40,36 @@ jobs:
           sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
 
+      - name: Create Cookie File
+        run: |
+          # Write cookies secret to a temporary file if present
+          echo "${{ secrets.YT_GOOGLE_CK }}" > cookies.txt
+          # Clean it up in case it's empty or has weird formatting
+          sed -i '/^[[:space:]]*$/d' cookies.txt
+
       - name: Download from YouTube
         id: download
         run: |
           mkdir -p downloads
           
-          # انتخاب فرمت دانلود بر اساس ورودی کاربر
+          # Choose download format
           if [ "${{ inputs.download_mode }}" = "audio" ]; then
             FORMAT_OPTS="-x --audio-format mp3 --audio-quality 0"
           else
             FORMAT_OPTS="-f bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
           fi
+
+          # Build cookie flag if cookie file is not empty
+          COOKIE_FLAG=""
+          if [ -s cookies.txt ]; then
+            echo "Cookies found! Applying --cookies flag."
+            COOKIE_FLAG="--cookies cookies.txt"
+          else
+            echo "Warning: No cookies secret found in YT_GOOGLE_CK. Proceeding without cookies."
+          fi
           
-          # دانلود ویدیوها
-          yt-dlp $FORMAT_OPTS \
+          # Download videos using yt-dlp
+          yt-dlp $FORMAT_OPTS $COOKIE_FLAG \
             -o "downloads/%(title)s.%(ext)s" \
             --restrict-filenames \
             --no-mtime \
@@ -61,24 +82,24 @@ jobs:
         env:
           DROPBOX_ACCESS_TOKEN: ${{ secrets.DROPBOX_ACCESS_TOKEN }}
         run: |
-          # بررسی وجود فایل برای آپلود
+          # Clean up temporary cookies file immediately
+          rm -f cookies.txt
+
           if [ -z "$(ls -A downloads)" ]; then
             echo "No files downloaded to upload."
             exit 1
           fi
 
-          # آپلود تک تک فایل‌ها به دراپ‌باکس
+          # Upload files to Dropbox
           for FILE_PATH in downloads/*; do
             [ -e "$FILE_PATH" ] || continue
             FILE_NAME=$(basename "$FILE_PATH")
             echo "Uploading $FILE_NAME to Dropbox..."
 
-            # ایجاد آرگومان‌های API به صورت JSON امن
             API_ARG=$(jq -cn \
               --arg path "/YouTube-Downloads/$FILE_NAME" \
               '{path: $path, mode: "add", autorename: true, mute: false, strict_conflict: false}')
 
-            # ارسال فایل به Dropbox API
             RESPONSE=$(curl -X POST https://content.dropboxapi.com/2/files/upload \
               --write-out "%{http_code}" --silent --output /dev/null \
               -H "Authorization: Bearer $DROPBOX_ACCESS_TOKEN" \
