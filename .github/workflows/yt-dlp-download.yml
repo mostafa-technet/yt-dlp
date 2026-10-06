@@ -103,7 +103,7 @@ jobs:
                 --audio-format mp3 \
                 --audio-quality 0 \
                 -f "bestaudio/best" \
-                -o "downloads/audio/%(uploader)s/%(title).200s [%(id)s].%(ext)s" \
+                -o "downloads/audio/%(uploader)s/%(title).200s_%(id)s.%(ext)s" \
                 "$url"
 
             else
@@ -119,7 +119,7 @@ jobs:
                 --no-overwrites \
                 --merge-output-format mp4 \
                 -f "bv*+ba/b" \
-                -o "downloads/video/%(uploader)s/%(title).200s [%(id)s].%(ext)s" \
+                -o "downloads/video/%(uploader)s/%(title).200s_%(id)s.%(ext)s" \
                 "$url"
 
             fi
@@ -184,38 +184,6 @@ jobs:
           fi
 
           echo
-          echo "Files before sanitizing:"
-          printf '  %s\n' "${FILES[@]}"
-
-          # GitHub CLI treats square brackets in asset names
-          # as glob patterns. Replace them before uploading.
-          for file in "${FILES[@]}"; do
-            dir=$(dirname "$file")
-            base=$(basename "$file")
-
-            safe_base=$(printf '%s' "$base" \
-              | sed 's/\[/_/g; s/\]/_/g')
-
-            if [ "$base" != "$safe_base" ]; then
-              safe_file="$dir/$safe_base"
-
-              echo
-              echo "Renaming:"
-              echo "  $file"
-              echo "  -> $safe_file"
-
-              mv -- "$file" "$safe_file"
-            fi
-          done
-
-          # Rebuild the file list after renaming.
-          mapfile -t FILES < <(
-            find downloads -type f \
-              ! -name "archive.txt" \
-              -print
-          )
-
-          echo
           echo "Files to upload:"
           printf '  %s\n' "${FILES[@]}"
 
@@ -226,8 +194,6 @@ jobs:
           Workflow run number: ${GITHUB_RUN_NUMBER}
           Downloaded files: ${#FILES[@]}"
 
-          # Build the gh command as an array.
-          # This safely preserves spaces and other shell characters.
           GH_ARGS=(
             release
             create
@@ -240,7 +206,6 @@ jobs:
             "$NOTES"
           )
 
-          # Add every downloaded file as a separate argument.
           for file in "${FILES[@]}"; do
             GH_ARGS+=("$file")
           done
