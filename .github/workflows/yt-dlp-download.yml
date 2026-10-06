@@ -1,4 +1,5 @@
-name: yt-dlp download and push
+```yaml
+name: yt-dlp download and release
 
 on:
   workflow_dispatch:
@@ -19,16 +20,11 @@ on:
 jobs:
   ytdlp:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -49,6 +45,7 @@ jobs:
       - name: Write cookies
         run: |
           echo "${{ secrets.YT_COOKIES }}" > cookies.txt
+
           if [ ! -s cookies.txt ]; then
             echo "YT_COOKIES secret is empty"
             exit 1
@@ -58,11 +55,15 @@ jobs:
         shell: bash
         run: |
           INPUT="${{ inputs.urls }}"
+
           printf '%s\n' "$INPUT" \
             | tr ',' '\n' \
             | tr ' ' '\n' \
             | sed '/^$/d' \
             | sort -u > urls.txt
+
+          echo "URLs to process:"
+          cat urls.txt
 
       - name: Download media
         shell: bash
@@ -71,13 +72,25 @@ jobs:
         run: |
           mkdir -p downloads
           mkdir -p failed
+
           NODE_EXE=$(which node)
+
           SUCCESS_COUNT=0
           FAIL_COUNT=0
+
           while IFS= read -r url || [ -n "$url" ]; do
             url=$(echo "$url" | xargs)
+
             [ -z "$url" ] && continue
+
+            echo
+            echo "========================================"
+            echo "Downloading: $url"
+            echo "Mode: $MODE"
+            echo "========================================"
+
             if [ "$MODE" = "audio" ]; then
+
               yt-dlp \
                 --cookies cookies.txt \
                 --js-runtimes "node:$NODE_EXE" \
@@ -93,7 +106,9 @@ jobs:
                 -f "bestaudio/best" \
                 -o "downloads/audio/%(uploader)s/%(title).200s [%(id)s].%(ext)s" \
                 "$url"
+
             else
+
               yt-dlp \
                 --cookies cookies.txt \
                 --js-runtimes "node:$NODE_EXE" \
@@ -107,31 +122,121 @@ jobs:
                 -f "bv*+ba/b" \
                 -o "downloads/video/%(uploader)s/%(title).200s [%(id)s].%(ext)s" \
                 "$url"
+
             fi
+
             if [ $? -eq 0 ]; then
-              SUCCESS_COUNT=$((SUCCESS_COUNT+1))
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              echo "SUCCESS: $url"
             else
               echo "$url" >> failed/failed_urls.txt
-              FAIL_COUNT=$((FAIL_COUNT+1))
+              FAIL_COUNT=$((FAIL_COUNT + 1))
+              echo "FAILED: $url"
             fi
+
           done < urls.txt
 
-      - name: Commit and Push Results
-        env:
-          REPO_PUSH_TOKEN: ${{ secrets.REPO_PUSH_TOKEN }}
+          echo
+          echo "========================================"
+          echo "Download summary"
+          echo "========================================"
+          echo "Successful: $SUCCESS_COUNT"
+          echo "Failed:     $FAIL_COUNT"
+
+      - name: Show downloaded files
+        shell: bash
         run: |
-          git config user.name "yt-dlp-bot"
-          git config user.email "yt-dlp@bot.local"
-          
-          git add -f downloads/
-          git add -f failed/ || true
-          
-          if git diff --cached --quiet; then
-            echo "No new files to commit."
+          echo "Downloaded files:"
+
+          if find downloads -type f \
+              ! -name "archive.txt" \
+              -print -quit | grep -q .; then
+
+            find downloads -type f \
+              ! -name "archive.txt" \
+              -print
+
+          else
+            echo "No downloaded files found."
+          fi
+
+      - name: Create GitHub Release
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          # Create a unique tag for this workflow run.
+          TAG="yt-dlp-${MODE}-${GITHUB_RUN_ID}"
+
+          TITLE="yt-dlp ${MODE} download #${GITHUB_RUN_NUMBER}"
+
+          echo "Release tag: $TAG"
+          echo "Release title: $TITLE"
+
+          # Collect downloaded files.
+          mapfile -t FILES < <(
+            find downloads -type f \
+              ! -name "archive.txt" \
+              -print
+          )
+
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "No downloaded files were produced."
+            exit 1
+          fi
+
+          echo
+          echo "Files to upload:"
+          printf '  %s\n' "${FILES[@]}"
+
+          # Build release notes.
+          NOTES="Downloaded by yt-dlp GitHub Actions workflow.
+
+          Mode: ${MODE}
+          Workflow run: ${GITHUB_RUN_ID}
+          Workflow run number: ${GITHUB_RUN_NUMBER}
+
+          Downloaded files: ${#FILES[@]}"
+
+          if [ -f failed/failed_urls.txt ]; then
+            NOTES="${NOTES}
+
+          Some URLs failed. See failed_urls.txt below."
+
+            # Add the failure list as a release asset later.
+          fi
+
+          # Create the release and upload all downloaded files.
+          gh release create "$TAG" \
+            "${FILES[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE" \
+            --notes "$NOTES"
+
+      - name: Upload failed URL list
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [ ! -f failed/failed_urls.txt ]; then
+            echo "No failed URLs file."
             exit 0
           fi
-          
-          git commit -m "yt-dlp download: $(date -u '+%Y-%m-%d %H:%M')"
-          
-          git remote set-url origin https://x-access-token:${REPO_PUSH_TOKEN}@github.com/mostafa-technet/yt-dlp.git
-          git push -f origin HEAD:yt-dlp-downloads
+
+          if [ ! -s failed/failed_urls.txt ]; then
+            echo "Failed URL file is empty."
+            exit 0
+          fi
+
+          TAG="yt-dlp-${MODE}-${GITHUB_RUN_ID}"
+
+          echo "Uploading failed_urls.txt to release $TAG"
+
+          gh release upload "$TAG" \
+            failed/failed_urls.txt \
+            --repo "$GITHUB_REPOSITORY"
+```
