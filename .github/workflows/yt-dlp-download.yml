@@ -1,3 +1,4 @@
+```yaml
 name: yt-dlp download and release
 
 on:
@@ -160,85 +161,86 @@ jobs:
           fi
 
       - name: Create GitHub Release
-      if: success()
-      shell: bash
-      env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      MODE: ${{ inputs.mode }}
-      run: |
-                TAG="yt-dlp-${MODE}-${GITHUB_RUN_ID}"
-                TITLE="yt-dlp ${MODE} download #${GITHUB_RUN_NUMBER}"
-      
-                echo "Release tag: $TAG"
-                echo "Release title: $TITLE"
-      
-                mapfile -t FILES < <(
-                  find downloads -type f \
-                    ! -name "archive.txt" \
-                    -print
-                )
-      
-                if [ "${#FILES[@]}" -eq 0 ]; then
-                  echo "No downloaded files were produced."
-                  exit 1
-                fi
-      
-                echo
-                echo "Files to upload:"
-                printf '  %s\n' "${FILES[@]}"
-      
-                NOTES="Downloaded by yt-dlp GitHub Actions workflow.
-      
-                Mode: ${MODE}
-                Workflow run: ${GITHUB_RUN_ID}
-                Workflow run number: ${GITHUB_RUN_NUMBER}
-                Downloaded files: ${#FILES[@]}"
-      
-                # Build the gh command as an array.
-                # This is important because filenames can contain spaces,
-                # brackets, parentheses, etc.
-                GH_ARGS=(
-                  release
-                  create
-                  "$TAG"
-                  --repo
-                  "$GITHUB_REPOSITORY"
-                  --title
-                  "$TITLE"
-                  --notes
-                  "$NOTES"
-                )
-      
-                # Add every downloaded file as a separate, quoted argument.
-                for file in "${FILES[@]}"; do
-                  GH_ARGS+=("$file")
-                done
-      
-                echo
-                echo "Creating GitHub Release..."
-      
-                gh "${GH_ARGS[@]}"
-                - name: Upload failed URL list
-                if: always()
-                shell: bash
-                env:
-                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                MODE: ${{ inputs.mode }}
-                  run: |
-                if [ ! -f failed/failed_urls.txt ]; then
-                  echo "No failed URLs file."
-                  exit 0
-                fi
-      
-                if [ ! -s failed/failed_urls.txt ]; then
-                  echo "Failed URL file is empty."
-                  exit 0
-                fi
-      
-                TAG="yt-dlp-${MODE}-${GITHUB_RUN_ID}"
-      
-                echo "Uploading failed_urls.txt to release $TAG"
-      
-                gh release upload "$TAG" \
-                  failed/failed_urls.txt \
-                  --repo "$GITHUB_REPOSITORY"
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          TAG="yt-dlp-${MODE}-${GITHUB_RUN_ID}"
+          TITLE="yt-dlp ${MODE} download #${GITHUB_RUN_NUMBER}"
+
+          echo "Release tag: $TAG"
+          echo "Release title: $TITLE"
+
+          mapfile -t FILES < <(
+            find downloads -type f \
+              ! -name "archive.txt" \
+              -print
+          )
+
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "No downloaded files were produced."
+            exit 1
+          fi
+
+          echo
+          echo "Files to upload:"
+          printf '  %s\n' "${FILES[@]}"
+
+          NOTES="Downloaded by yt-dlp GitHub Actions workflow.
+
+          Mode: ${MODE}
+          Workflow run: ${GITHUB_RUN_ID}
+          Workflow run number: ${GITHUB_RUN_NUMBER}
+          Downloaded files: ${#FILES[@]}"
+
+          # Build the gh command as an array.
+          # This preserves spaces, brackets, parentheses, etc.
+          GH_ARGS=(
+            release
+            create
+            "$TAG"
+            --repo
+            "$GITHUB_REPOSITORY"
+            --title
+            "$TITLE"
+            --notes
+            "$NOTES"
+          )
+
+          # Add every downloaded file as a separate argument.
+          for file in "${FILES[@]}"; do
+            GH_ARGS+=("$file")
+          done
+
+          echo
+          echo "Creating GitHub Release..."
+
+          gh "${GH_ARGS[@]}"
+
+      - name: Upload failed URL list
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          if [ ! -f failed/failed_urls.txt ]; then
+            echo "No failed URLs file."
+            exit 0
+          fi
+
+          if [ ! -s failed/failed_urls.txt ]; then
+            echo "Failed URL file is empty."
+            exit 0
+          fi
+
+          TAG="yt-dlp-${MODE}-${GITHUB_RUN_ID}"
+
+          echo "Uploading failed_urls.txt to release $TAG"
+
+          gh release upload "$TAG" \
+            failed/failed_urls.txt \
+            --repo "$GITHUB_REPOSITORY"
+```
