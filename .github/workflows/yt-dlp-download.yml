@@ -184,6 +184,38 @@ jobs:
           fi
 
           echo
+          echo "Files before sanitizing:"
+          printf '  %s\n' "${FILES[@]}"
+
+          # GitHub CLI treats square brackets in asset names
+          # as glob patterns. Replace them before uploading.
+          for file in "${FILES[@]}"; do
+            dir=$(dirname "$file")
+            base=$(basename "$file")
+
+            safe_base=$(printf '%s' "$base" \
+              | sed 's/\[/_/g; s/\]/_/g')
+
+            if [ "$base" != "$safe_base" ]; then
+              safe_file="$dir/$safe_base"
+
+              echo
+              echo "Renaming:"
+              echo "  $file"
+              echo "  -> $safe_file"
+
+              mv -- "$file" "$safe_file"
+            fi
+          done
+
+          # Rebuild the file list after renaming.
+          mapfile -t FILES < <(
+            find downloads -type f \
+              ! -name "archive.txt" \
+              -print
+          )
+
+          echo
           echo "Files to upload:"
           printf '  %s\n' "${FILES[@]}"
 
@@ -195,7 +227,7 @@ jobs:
           Downloaded files: ${#FILES[@]}"
 
           # Build the gh command as an array.
-          # This preserves spaces, brackets, parentheses, etc.
+          # This safely preserves spaces and other shell characters.
           GH_ARGS=(
             release
             create
@@ -219,7 +251,7 @@ jobs:
           gh "${GH_ARGS[@]}"
 
       - name: Upload failed URL list
-        if: always()
+        if: success()
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
