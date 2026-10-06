@@ -1,4 +1,3 @@
-```yaml
 name: yt-dlp download and release
 
 on:
@@ -239,4 +238,3 @@ jobs:
           gh release upload "$TAG" \
             failed/failed_urls.txt \
             --repo "$GITHUB_REPOSITORY"
-```
