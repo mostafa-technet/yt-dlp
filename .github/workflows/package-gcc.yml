@@ -1,0 +1,23 @@
+
+name: Package GCC Git Repository
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone GCC release branch
+        run: |
+          git clone --single-branch --branch releases/gcc-15 \
+            https://gcc.gnu.org/git/gcc.git gcc
+          cd gcc
+          git bundle create ../gcc.bundle --all
+
+      - name: Upload Git bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcc-git-bundle
+          path: gcc.bundle
+          retention-days: 7
